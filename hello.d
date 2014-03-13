@@ -32,13 +32,13 @@ void processMessage(string message)
 }
 
 
-extern(C) void mybye(int value){
-    writeln("oh... Bye then!");
-    exit(0);    
+extern(C) void stopMosquittoLoop(int value){
+    shouldRun = false;
 }
 
+shared static int shouldRun = true;
 
-void main()
+int main()
 {
     int status;
     
@@ -59,10 +59,8 @@ void main()
     
     mosquitto_subscribe(mosq, null, "tri_data/szmaia/+".toStringz, 1);
 
+    sigset(SIGINT, &stopMosquittoLoop);
 
-    sigset(SIGINT, &mybye);
-
-    int shouldRun = true;
     while(shouldRun)
     {
         status = mosquitto_loop(mosq, 1, 50);
@@ -73,7 +71,11 @@ void main()
             mosquitto_reconnect(mosq);
         }	
     }
+
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
+
+    writeln("Exiting...");
+    return 0;
 }
 
