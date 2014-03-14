@@ -3,51 +3,96 @@ module mosquitto;
 
 import std.conv;
 import std.stdio;
+import std.string;
+import core.thread;
+import std.json;
+import std.exception;
+
 
 extern(C)
 void onConnectWrapper(mosquitto *mosq, void *userdata, int rc)
 {
-    writeln("onConnectWrapper");
-    Mosquitto m = cast(Mosquitto)userdata;
-    m.onConnect(rc);
+    writeln("- Connected.");
+    Mosquitto mqtt = cast(Mosquitto)userdata;
+    mqtt.onConnect(rc);
 }
 
+extern(C)
+void onMessage(mosquitto *mosq, void *userdata, const(mosquitto_message*) message)
+{
+    processMessage(to!string(cast(char*)message.payload));
+}
+
+
+void processMessage(string message)
+{
+    JSONValue value = parseJSON(message);
+    writeln(value);
+}
 
 
 class Mosquitto
 {
-private:
-    mosquitto *m_mosq;
 
-public:
-    this(string id, bool clean_session = true)
+    this()
     {
-        /* const char *id, */
-        m_mosq = mosquitto_new(cast(const(char*))id, clean_session, cast(void*)this);
+        
+        status = mosquitto_lib_init();
+        enforce(status == mosq_err_t.MOSQ_ERR_SUCCESS);
 
-        /* int status = mosquitto_lib_init(); */
+        mosq = mosquitto_new("foo", true, cast(void*)this);
+        enforce(mosq !is null);
 
-        mosquitto_connect_callback_set(m_mosq, &onConnectWrapper);
+        status = mosquitto_username_pw_set(mosq, "mqttauth", "1234");
+        enforce(status == mosq_err_t.MOSQ_ERR_SUCCESS);
 
-        /* mosquitto_disconnect_callback_set(m_mosq, on_disconnect_wrapper); */
-        /* mosquitto_publish_callback_set(m_mosq, on_publish_wrapper); */
-        /* mosquitto_message_callback_set(m_mosq, on_message_wrapper); */
-        /* mosquitto_subscribe_callback_set(m_mosq, on_subscribe_wrapper); */
-        /* mosquitto_unsubscribe_callback_set(m_mosq, on_unsubscribe_wrapper); */
-        /* mosquitto_log_callback_set(m_mosq, on_log_wrapper); */
+        mosquitto_connect_callback_set(mosq, &onConnectWrapper);
+        mosquitto_message_callback_set(mosq, &onMessage);
+
+        status = mosquitto_connect(mosq, "5.9.153.213", 1883, 30);
+        enforce(status == mosq_err_t.MOSQ_ERR_SUCCESS);
+        
+        mosquitto_subscribe(mosq, null, "tri_data/szmaia/+".toStringz, 1);
+
     }
 
-    int connect(string host, int port = 1883, int keepalive = 60)
+
+    void start()
     {
-        writeln("Mosquitto.connect");
-	    return mosquitto_connect(m_mosq, cast(const(char*))host, port, keepalive);
+        int shouldRun = true;
+        while(shouldRun)
+        {
+            status = mosquitto_loop(mosq, 1, 50);
+            if (shouldRun && status)
+            {
+                writeln("- Reconnecting...");
+                Thread.sleep(dur!"seconds"(5));
+                mosquitto_reconnect(mosq);
+            }	
+        }
     }
+
 
     void onConnect(int rc)
     {
-        return;
+        this._onConnect(rc);
     }
 
+    void onConnect(ConnectCallbackT callback)
+    {
+        this._onConnect = callback;
+    }
+
+
+private:
+    mosquitto *mosq;
+    int status;
+
+    alias void function(int) ConnectCallbackT;
+    ConnectCallbackT _onConnect;
+
+    /* alias void function(mosquitto*, void*, const(mosquitto_message*)) MessageCallbackT; */
+    /* MessageCallbackT _onMessage; */
 }
 
 
